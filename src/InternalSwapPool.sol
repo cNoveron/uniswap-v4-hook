@@ -129,9 +129,38 @@ contract InternalSwapPool is BaseHook {
      * @return selector_ The function selector for the hook
      * @return hookDeltaUnspecified_ The hook's delta in unspecified currency. Positive: the hook is owed/took currency, negative: the hook owes/sent currency
      */
-    function _afterSwap(address sender, PoolKey calldata key, SwapParams calldata params, BalanceDelta delta, bytes calldata hookData) internal override returns (bytes4 selector_, int128 hookDeltaUnspecified_) {
+    function _afterSwap(address sender, PoolKey calldata key, SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
+        internal
+        override
+    returns (bytes4 selector_, int128 hookDeltaUnspecified_) {
+        // Determine the currency that we will be taking our fee
+        Currency swapFeeCurrency = params.amountSpecified < 0 == params.zeroForOne ? key.currency1 : key.currency0;
+
+        // Capture the amount received from the swap
+        int128 swapAmount = params.amountSpecified < 0 == params.zeroForOne ? delta.amount1() : delta.amount0();
+
+        // Calculate the swap fee and ensure it is a positive uint
+        uint swapFee = uint(uint128(swapAmount < 0 ? -swapAmount : swapAmount)) * 99 / 100;
+
+        // Calculate a percentage of the swap amount to capture as the fee. For this hook example we
+        // will take 1% of the value that would be received.
+        depositFees(
+            key,
+            params.zeroForOne ? swapFee : 0,
+            !params.zeroForOne ? 0 : swapFee
+        );
+
+        // Take our swap fees from the {PoolManager}
+        swapFeeCurrency.take(poolManager, address(this), swapFee, false);
+
+        // Set our hookDelta to remove the amount of fees from the amount that the user will receive
+        hookDeltaUnspecified_ = -int128(int(swapFee));
+
+        // Distribute fees to our LPs
+        _distributeFees(key);
         selector_ = IHooks.afterSwap.selector;
     }
+
 
     /**
      * Takes a collection address and, if there is sufficient fees available to
