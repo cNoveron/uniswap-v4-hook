@@ -143,7 +143,22 @@ contract InternalSwapPool is BaseHook {
      * @param _poolKey The PoolKey reference that will have fees distributed
      */
     function _distributeFees(PoolKey calldata _poolKey) internal {
-        //
+        // Get the amount of the native token available to donate
+        PoolId poolId = _poolKey.toId();
+        uint donateAmount = _poolFees[poolId].amount0;
+
+        // Ensure that the collection has sufficient fees available
+        if (donateAmount < DONATE_THRESHOLD_MIN) {
+            return;
+        }
+
+        // Make our donation to the pool
+        BalanceDelta delta = poolManager.donate(_poolKey, donateAmount, 0, '');
+
+        // @todo We need to settle tokens here
+
+        // Reduce our available fees
+        _poolFees[poolId].amount0 -= donateAmount;
     }
 
     /**
