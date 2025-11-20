@@ -155,7 +155,10 @@ contract InternalSwapPool is BaseHook {
         // Make our donation to the pool
         BalanceDelta delta = poolManager.donate(_poolKey, donateAmount, 0, '');
 
-        // @todo We need to settle tokens here
+        // Check the native delta amounts that we need to transfer from the contract
+        if (delta.amount0() < 0) {
+            _poolKey.currency0.settle(poolManager, address(this), uint(uint128(-delta.amount0())), false);
+        }
 
         // Reduce our available fees
         _poolFees[poolId].amount0 -= donateAmount;
