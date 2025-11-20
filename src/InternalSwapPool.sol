@@ -114,6 +114,103 @@ contract InternalSwapPool is BaseHook {
      * @return swapFee_ The percentage fee applied to our swap
      */
     function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData) internal override returns (bytes4 selector_, BeforeSwapDelta beforeSwapDelta_, uint24 swapFee_) {
+        // Get the PoolId from the PoolKey
+        PoolId poolId = key.toId();
+
+        // Frontrun uniswap to sell token1 amounts from our fees into token0 ahead of
+        // our fee distribution calls. This acts as a partial orderbook to remove slippage
+        // impact against our pool.
+
+        // We want to check if out token0 is the eth equivalent, or if it has swapped to token1
+        if (!params.zeroForOne && _poolFees[poolId].amount1 != 0) {
+            // Capture the amount of tokens we will take, and the amount of ETH we will receive
+            uint tokenIn;
+            uint ethOut;
+
+            // Get the current price for our pool to use as an price basis of our swaps
+            (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(poolId);
+
+            // We need to vary our swap logic based on if we have an exact input or output
+            if (params.amountSpecified >= 0) {
+                // token0 for token1 with Exact Output for Input (amountSpecified = positive value representing token1):
+                // -> the user is specifying their swap amount in terms of token1, so the specifiedCurrency is token1
+                // -> the unspecifiedCurrency is token0
+
+                // Since we have an amount of token1 specified, we can determine the maximum
+                // amount that we can transact from our pool fees. We do this by taking the
+                // max value of either the pool token1 fees or the amount specified to swap for.
+                uint amountSpecified = (uint(params.amountSpecified) > _poolFees[poolId].amount1) ? _poolFees[poolId].amount1 : uint(params.amountSpecified);
+
+                // Capture the amount of ETH (token0) required at the current pool state to purchase
+                // the amount of token1 specified, capped by the pool fees available.
+                // We don't apply a fee for this as it benefits the ecosystem and essentially performs
+                // a free swap benefitting both parties.
+                (, ethOut, tokenIn, ) = SwapMath.computeSwapStep({
+                    sqrtPriceCurrentX96: sqrtPriceX96,
+                    sqrtPriceTargetX96: params.sqrtPriceLimitX96,
+                    liquidity: poolManager.getLiquidity(poolId),
+                    amountRemaining: int(amountSpecified),
+                    feePips: 0
+                });
+
+                // Update our hook delta to reduce the upcoming swap amount to show that we have
+                // already spent some of the ETH and received some of the underlying ERC20.
+                // Specified = exact output (T)
+                // Unspecified = ETH
+                beforeSwapDelta_ = toBeforeSwapDelta(-int128(int(tokenIn)), int128(int(ethOut)));
+            } else {
+                // ETH for token1 with Exact Input for Output (amountSpecified = negative value representing ETH):
+                // -> the user is specifying their swap amount in terms of ETH, so the specifiedCurrency is ETH
+                // -> the unspecifiedCurrency is token1
+
+                // Since we have an amount of token0 specified, we need to just determine the
+                // amount that we would receive if we were to convert all of the pool fees. When
+                // we have this value we can find the amount of ETH that would be required to fill
+                // this amount and then determine if we can fill in its entirety, or would require
+                // us to calculate a discounted amount.
+                (, ethOut, tokenIn, ) = SwapMath.computeSwapStep({
+                    sqrtPriceCurrentX96: sqrtPriceX96,
+                    sqrtPriceTargetX96: params.sqrtPriceLimitX96,
+                    liquidity: poolManager.getLiquidity(poolId),
+                    amountRemaining: int(_poolFees[poolId].amount1),
+                    feePips: 0
+                });
+
+                // Now that we know how much `ethOut` would be required to fill all of the pool
+                // token1 fees (`tokenIn`), we can see if we can fund enough using the token0
+                // provided.
+                if (ethOut > uint(-params.amountSpecified)) {
+                    // We need to calculate the percentage of token0 and then apply that same
+                    // percentage reduction to the `tokenIn` amount. This will allow us to
+                    // successfully fill the order.
+                    uint percentage = (uint(-params.amountSpecified) * 1e18) / ethOut;
+
+                    // Apply the same percentage reduction to tokenIn
+                    tokenIn = (tokenIn * percentage) / 1e18;
+                }
+
+                // Update our hook delta to reduce the upcoming swap amount to show that we have
+                // already spent some of the ETH and received some of the underlying ERC20.
+                // Specified = exact input (ETH)
+                // Unspecified = token1
+                beforeSwapDelta_ = toBeforeSwapDelta(int128(int(ethOut)), -int128(int(tokenIn)));
+            }
+
+            // Reduce the amount of fees that have been extracted from the pool and converted
+            // into ETH fees.
+            _poolFees[poolId].amount0 += ethOut;
+            _poolFees[poolId].amount1 -= tokenIn;
+
+            // Sync our tokens
+            poolManager.sync(key.currency0);
+            poolManager.sync(key.currency1);
+
+            // Transfer the tokens to our PoolManager, which will later swap them to our user
+            poolManager.take(key.currency0, address(this), ethOut);
+            key.currency1.settle(poolManager, address(this), tokenIn, false);
+        }
+
+        // Set our return selector
         selector_ = IHooks.beforeSwap.selector;
     }
 
