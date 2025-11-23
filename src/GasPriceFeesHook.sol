@@ -118,7 +118,7 @@ contract GasPriceFeesHook is BaseHook {
         BalanceDelta,
         bytes calldata
     ) internal override returns (bytes4, int128) {
-		// TODO
+        updateMovingAverage();
         return (this.afterSwap.selector, 0);
     }
 }
