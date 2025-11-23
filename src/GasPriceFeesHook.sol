@@ -26,7 +26,19 @@ contract GasPriceFeesHook is BaseHook {
 
     // Initialize BaseHook parent contract in the constructor
     constructor(IPoolManager _poolManager) BaseHook(_poolManager) {
-		// TODO
+        updateMovingAverage();
+    }
+
+    // Update our moving average gas price
+    function updateMovingAverage() internal {
+        uint128 gasPrice = uint128(tx.gasprice);
+
+        // New Average = ((Old Average * # of Txns Tracked) + Current Gas Price) / (# of Txns Tracked + 1)
+        movingAverageGasPrice =
+            ((movingAverageGasPrice * movingAverageGasPriceCount) + gasPrice) /
+            (movingAverageGasPriceCount + 1);
+
+        movingAverageGasPriceCount++;
     }
 
     // Required override function for BaseHook to let the PoolManager know which hooks are implemented
