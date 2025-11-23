@@ -60,7 +60,9 @@ contract GasPriceFeesHook is BaseHook {
         PoolKey calldata key,
         uint160
     ) internal pure override returns (bytes4) {
-        // TODO
+        // `.isDynamicFee()` function comes from using
+        // the `LPFeeLibrary` for `uint24`
+        if (!key.fee.isDynamicFee()) revert MustUseDynamicFee();
         return this.beforeInitialize.selector;
     }
 
