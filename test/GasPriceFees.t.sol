@@ -62,4 +62,105 @@ contract TestGasPriceFeesHook is Test, Deployers {
             ZERO_BYTES
         );
     }
+
+    function test_feeUpdatesWithGasPrice() public {
+        // Set up our swap parameters
+        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest
+            .TestSettings({takeClaims: false, settleUsingBurn: false});
+
+        SwapParams memory params = SwapParams({
+            zeroForOne: true,
+            amountSpecified: -0.00001 ether,
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
+
+        // Current gas price is 10 gwei
+        // Moving average should also be 10
+        uint128 gasPrice = uint128(tx.gasprice);
+        uint128 movingAverageGasPrice = hook.movingAverageGasPrice();
+        uint104 movingAverageGasPriceCount = hook.movingAverageGasPriceCount();
+        assertEq(gasPrice, 10 gwei);
+        assertEq(movingAverageGasPrice, 10 gwei);
+        assertEq(movingAverageGasPriceCount, 1);
+
+        // ----------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+
+        // 1. Conduct a swap at gasprice = 10 gwei
+        // This should just use `BASE_FEE` since the gas price is the same as the current average
+        uint256 balanceOfToken1Before = currency1.balanceOfSelf();
+        swapRouter.swap(key, params, testSettings, ZERO_BYTES);
+        uint256 balanceOfToken1After = currency1.balanceOfSelf();
+        uint256 outputFromBaseFeeSwap = balanceOfToken1After -
+            balanceOfToken1Before;
+
+        assertGt(balanceOfToken1After, balanceOfToken1Before);
+
+        // Our moving average shouldn't have changed
+        // only the count should have incremented
+        movingAverageGasPrice = hook.movingAverageGasPrice();
+        movingAverageGasPriceCount = hook.movingAverageGasPriceCount();
+        assertEq(movingAverageGasPrice, 10 gwei);
+        assertEq(movingAverageGasPriceCount, 2);
+
+        // ----------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+
+        // 2. Conduct a swap at lower gasprice = 4 gwei
+        // This should have a higher transaction fees
+        vm.txGasPrice(4 gwei);
+        balanceOfToken1Before = currency1.balanceOfSelf();
+        swapRouter.swap(key, params, testSettings, ZERO_BYTES);
+        balanceOfToken1After = currency1.balanceOfSelf();
+
+        uint256 outputFromIncreasedFeeSwap = balanceOfToken1After -
+            balanceOfToken1Before;
+
+        assertGt(balanceOfToken1After, balanceOfToken1Before);
+
+        // Our moving average should now be (10 + 10 + 4) / 3 = 8 Gwei
+        movingAverageGasPrice = hook.movingAverageGasPrice();
+        movingAverageGasPriceCount = hook.movingAverageGasPriceCount();
+        assertEq(movingAverageGasPrice, 8 gwei);
+        assertEq(movingAverageGasPriceCount, 3);
+
+        // ----------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+
+        // 3. Conduct a swap at higher gas price = 12 gwei
+        // This should have a lower transaction fees
+        vm.txGasPrice(12 gwei);
+        balanceOfToken1Before = currency1.balanceOfSelf();
+        swapRouter.swap(key, params, testSettings, ZERO_BYTES);
+        balanceOfToken1After = currency1.balanceOfSelf();
+
+        uint outputFromDecreasedFeeSwap = balanceOfToken1After -
+            balanceOfToken1Before;
+
+        assertGt(balanceOfToken1After, balanceOfToken1Before);
+
+        // Our moving average should now be (10 + 10 + 4 + 12) / 4 = 9 Gwei
+        movingAverageGasPrice = hook.movingAverageGasPrice();
+        movingAverageGasPriceCount = hook.movingAverageGasPriceCount();
+
+        assertEq(movingAverageGasPrice, 9 gwei);
+        assertEq(movingAverageGasPriceCount, 4);
+
+        // ------
+
+        // 4. Check all the output amounts
+
+        console.log("Base Fee Output", outputFromBaseFeeSwap);
+        console.log("Increased Fee Output", outputFromIncreasedFeeSwap);
+        console.log("Decreased Fee Output", outputFromDecreasedFeeSwap);
+
+        assertGt(outputFromDecreasedFeeSwap, outputFromBaseFeeSwap);
+        assertGt(outputFromBaseFeeSwap, outputFromIncreasedFeeSwap);
+    }
 }
