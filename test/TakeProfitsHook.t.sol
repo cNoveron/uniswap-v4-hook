@@ -101,4 +101,39 @@ contract TakeProfitsHookTest is Test, Deployers {
             ZERO_BYTES
         );
     }
+
+    function test_placeOrder() public {
+        // Place a zeroForOne take-profit order
+        // for 10e18 token0 tokens
+        // at tick 100
+        int24 tick = 100;
+        uint256 amount = 10e18;
+        bool zeroForOne = true;
+
+        // Note the original balance of token0 we have
+        uint256 originalBalance = token0.balanceOfSelf();
+
+        // Place the order
+        int24 tickLower = hook.placeOrder(key, tick, zeroForOne, amount);
+
+        // Note the new balance of token0 we have
+        uint256 newBalance = token0.balanceOfSelf();
+
+        // Since we deployed the pool contract with tick spacing = 60
+        // i.e. the tick can only be a multiple of 60
+        // the tickLower should be 60 since we placed an order at tick 100
+        assertEq(tickLower, 60);
+
+        // Ensure that our balance of token0 was reduced by `amount` tokens
+        assertEq(originalBalance - newBalance, amount);
+
+        // Check the balance of ERC-1155 tokens we received
+        uint256 orderId = hook.getOrderId(key, tickLower, zeroForOne);
+        uint256 tokenBalance = hook.balanceOf(address(this), orderId);
+
+        // Ensure that we were, in fact, given ERC-1155 tokens for the order
+        // equal to the `amount` of token0 tokens we placed the order for
+        assertTrue(orderId != 0);
+        assertEq(tokenBalance, amount);
+    }
 }
