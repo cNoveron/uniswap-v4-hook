@@ -132,6 +132,31 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         return (this.afterSwap.selector, 0);
     }
 
+    function cancelOrder(
+        PoolKey calldata key,
+        int24 tickToSellAt,
+        bool zeroForOne,
+        uint256 amountToCancel
+    ) external {
+        // Get lower actually usable tick for their order
+        int24 tick = getLowerUsableTick(tickToSellAt, key.tickSpacing);
+        uint256 orderId = getOrderId(key, tick, zeroForOne);
+
+        // Check how many claim tokens they have for this position
+        uint256 positionTokens = balanceOf(msg.sender, orderId);
+        if (positionTokens < amountToCancel) revert NotEnoughToClaim();
+
+        // Remove their `amountToCancel` worth of position from pending orders
+        pendingOrders[key.toId()][tick][zeroForOne] -= amountToCancel;
+        // Reduce claim token total supply and burn their share
+        claimTokensSupply[orderId] -= amountToCancel;
+        _burn(msg.sender, orderId, amountToCancel);
+
+        // Send them their input token
+        Currency token = zeroForOne ? key.currency0 : key.currency1;
+        token.transfer(msg.sender, amountToCancel);
+    }
+
     function getLowerUsableTick(
         int24 tick,
         int24 tickSpacing
