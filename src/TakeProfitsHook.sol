@@ -39,6 +39,9 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
     mapping(uint256 orderId => uint256 claimsSupply)
         public claimTokensSupply;
 
+    mapping(uint256 orderId => uint256 outputClaimable)
+            public claimableOutputTokens;
+
     // Errors
     error InvalidOrder();
     error NothingToClaim();
@@ -155,6 +158,45 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         // Send them their input token
         Currency token = zeroForOne ? key.currency0 : key.currency1;
         token.transfer(msg.sender, amountToCancel);
+    }
+
+    function redeem(
+        PoolKey calldata key,
+        int24 tickToSellAt,
+        bool zeroForOne,
+        uint256 inputAmountToClaimFor
+    ) external {
+        // Get lower actually usable tick for their order
+        int24 tick = getLowerUsableTick(tickToSellAt, key.tickSpacing);
+        uint256 orderId = getOrderId(key, tick, zeroForOne);
+
+        // If no output tokens can be claimed yet i.e. order hasn't been filled
+        // throw error
+        if (claimableOutputTokens[orderId] == 0) revert NothingToClaim();
+
+        // they must have claim tokens >= inputAmountToClaimFor
+        uint256 claimTokens = balanceOf(msg.sender, orderId);
+        if (claimTokens < inputAmountToClaimFor) revert NotEnoughToClaim();
+
+        uint256 totalClaimableForPosition = claimableOutputTokens[orderId];
+        uint256 totalInputAmountForPosition = claimTokensSupply[orderId];
+
+        // outputAmount = (inputAmountToClaimFor * totalClaimableForPosition) / (totalInputAmountForPosition)
+        uint256 outputAmount = inputAmountToClaimFor.mulDivDown(
+            totalClaimableForPosition,
+            totalInputAmountForPosition
+        );
+
+        // Reduce claimable output tokens amount
+        // Reduce claim token total supply for position
+        // Burn claim tokens
+        claimableOutputTokens[orderId] -= outputAmount;
+        claimTokensSupply[orderId] -= inputAmountToClaimFor;
+        _burn(msg.sender, orderId, inputAmountToClaimFor);
+
+        // Transfer output tokens
+        Currency token = zeroForOne ? key.currency1 : key.currency0;
+        token.transfer(msg.sender, outputAmount);
     }
 
     function getLowerUsableTick(
