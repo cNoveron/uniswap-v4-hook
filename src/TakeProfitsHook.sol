@@ -199,6 +199,37 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         token.transfer(msg.sender, outputAmount);
     }
 
+    function executeOrder(
+        PoolKey calldata key,
+        int24 tick,
+        bool zeroForOne,
+        uint256 inputAmount
+    ) internal {
+        // Do the actual swap and settle all balances
+        BalanceDelta delta = swapAndSettleBalances(
+            key,
+            SwapParams({
+                zeroForOne: zeroForOne,
+                // We provide a negative value here to signify an "exact input for output" swap
+                amountSpecified: -int256(inputAmount),
+                // No slippage limits (maximum slippage possible)
+                sqrtPriceLimitX96: zeroForOne
+                    ? TickMath.MIN_SQRT_PRICE + 1
+                    : TickMath.MAX_SQRT_PRICE - 1
+            })
+        );
+
+        // `inputAmount` has been deducted from this position
+        pendingOrders[key.toId()][tick][zeroForOne] -= inputAmount;
+        uint256 orderId = getOrderId(key, tick, zeroForOne);
+        uint256 outputAmount = zeroForOne
+            ? uint256(int256(delta.amount1()))
+            : uint256(int256(delta.amount0()));
+
+        // `outputAmount` worth of tokens now can be claimed/redeemed by position holders
+        claimableOutputTokens[orderId] += outputAmount;
+    }
+
     function swapAndSettleBalances(
         PoolKey calldata key,
         SwapParams memory params
