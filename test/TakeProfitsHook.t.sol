@@ -5,6 +5,8 @@ pragma solidity ^0.8.0;
 import {Test} from "forge-std/Test.sol";
 
 import {Deployers} from "@uniswap/v4-core/test/utils/Deployers.sol";
+import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
+
 import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
@@ -23,7 +25,7 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 
 import {TakeProfitsHook} from "../src/TakeProfitsHook.sol";
 
-contract TakeProfitsHookTest is Test, Deployers {
+contract TakeProfitsHookTest is Test, Deployers, ERC1155Holder {
     // Use the libraries
     using StateLibrary for IPoolManager;
 
@@ -135,5 +137,34 @@ contract TakeProfitsHookTest is Test, Deployers {
         // equal to the `amount` of token0 tokens we placed the order for
         assertTrue(orderId != 0);
         assertEq(tokenBalance, amount);
+    }
+
+    function test_cancelOrder() public {
+        // Place an order as earlier
+        int24 tick = 100;
+        uint256 amount = 10e18;
+        bool zeroForOne = true;
+
+        uint256 originalBalance = token0.balanceOfSelf();
+        int24 tickLower = hook.placeOrder(key, tick, zeroForOne, amount);
+        uint256 newBalance = token0.balanceOfSelf();
+
+        assertEq(tickLower, 60);
+        assertEq(originalBalance - newBalance, amount);
+
+        // Check the balance of ERC-1155 tokens we received
+        uint256 orderId = hook.getOrderId(key, tickLower, zeroForOne);
+        uint256 tokenBalance = hook.balanceOf(address(this), orderId);
+        assertEq(tokenBalance, amount);
+
+        // Cancel the order
+        hook.cancelOrder(key, tickLower, zeroForOne, amount);
+
+        // Check that we received our token0 tokens back, and no longer own any ERC-1155 tokens
+        uint256 finalBalance = token0.balanceOfSelf();
+        assertEq(finalBalance, originalBalance);
+
+        tokenBalance = hook.balanceOf(address(this), orderId);
+        assertEq(tokenBalance, 0);
     }
 }
