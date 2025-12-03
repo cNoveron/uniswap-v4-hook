@@ -42,6 +42,8 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
     mapping(uint256 orderId => uint256 outputClaimable)
             public claimableOutputTokens;
 
+    mapping(PoolId poolId => int24 lastTick) public lastTicks;
+
     // Errors
     error InvalidOrder();
     error NothingToClaim();
@@ -52,6 +54,16 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         IPoolManager _manager,
         string memory _uri
     ) BaseHook(_manager) ERC1155(_uri) {}
+
+    function _afterInitialize(
+        address,
+        PoolKey calldata key,
+        uint160,
+        int24 tick
+    ) internal override returns (bytes4) {
+        lastTicks[key.toId()] = tick;
+        return this.afterInitialize.selector;
+    }
 
 	// BaseHook Functions
     function getHookPermissions()
@@ -114,16 +126,6 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         return tick;
     }
 
-    function _afterInitialize(
-        address,
-        PoolKey calldata key,
-        uint160,
-        int24 tick
-    ) internal override returns (bytes4) {
-		// TODO
-        return this.afterInitialize.selector;
-    }
-
     function _afterSwap(
         address sender,
         PoolKey calldata key,
@@ -131,7 +133,36 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         BalanceDelta,
         bytes calldata
     ) internal override returns (bytes4, int128) {
-		// TODO
+        // `sender` is the address which initiated the swap
+        // if `sender` is the hook, we don't want to go down the `afterSwap`
+        // rabbit hole again
+        if (sender == address(this)) return (this.afterSwap.selector, 0);
+
+        // Should we try to find and execute orders? True initially
+        bool tryMore = true;
+        int24 currentTick;
+
+        while (tryMore) {
+            // Try executing pending orders for this pool
+
+            // `tryMore` is true if we successfully found and executed an order
+            // which shifted the tick value
+            // and therefore we need to look again if there are any pending orders
+            // within the new tick range
+
+            // `tickAfterExecutingOrder` is the tick value of the pool
+            // after executing an order
+            // if no order was executed, `tickAfterExecutingOrder` will be
+            // the same as current tick, and `tryMore` will be false
+            (tryMore, currentTick) = tryExecutingOrders(
+                key,
+                !params.zeroForOne
+            );
+        }
+
+        // New last known tick for this pool is the tick value
+        // after our orders are executed
+        lastTicks[key.toId()] = currentTick;
         return (this.afterSwap.selector, 0);
     }
 
