@@ -154,10 +154,7 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
             // after executing an order
             // if no order was executed, `tickAfterExecutingOrder` will be
             // the same as current tick, and `tryMore` will be false
-            (tryMore, currentTick) = tryExecutingOrders(
-                key,
-                !params.zeroForOne
-            );
+            (tryMore, currentTick) = tryExecutingOrders(key);
         }
 
         // New last known tick for this pool is the tick value
@@ -327,8 +324,7 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
     }
 
     function tryExecutingOrders(
-        PoolKey calldata key,
-        bool executeZeroForOne
+        PoolKey calldata key
     ) internal returns (bool tryMore, int24 newTick) {
         (, int24 currentTick, , ) = poolManager.getSlot0(key.toId());
         int24 lastTick = lastTicks[key.toId()];
@@ -349,20 +345,18 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         // i.e. check if we have any orders to sell ETH at the new price that ETH is at now because of the increase
         if (currentTick > lastTick) {
             // Loop over all ticks from `lastTick` to `currentTick`
-            // and execute orders that are looking to sell Token 0
+            // and execute orders that are looking to sell Token 0 (zeroForOne = true)
             for (
                 int24 tick = lastTick;
                 tick < currentTick;
                 tick += key.tickSpacing
             ) {
-                uint256 inputAmount = pendingOrders[key.toId()][tick][
-                    executeZeroForOne
-                ];
+                uint256 inputAmount = pendingOrders[key.toId()][tick][true];
                 if (inputAmount > 0) {
                     // An order with these parameters can be placed by one or more users
                     // We execute the full order as a single swap
                     // Regardless of how many unique users placed the same order
-                    executeOrder(key, tick, executeZeroForOne, inputAmount);
+                    executeOrder(key, tick, true, inputAmount);
 
                     // Return true because we may have more orders to execute
                     // from lastTick to new current tick
@@ -386,17 +380,15 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         // We should check if we have any orders looking to sell Token 1
         // at ticks `currentTick` to `lastTick`
         // i.e. check if we have any orders to buy ETH at the new price that ETH is at now because of the decrease
-        else {
+        else if (currentTick < lastTick) {
             for (
                 int24 tick = lastTick;
                 tick > currentTick;
                 tick -= key.tickSpacing
             ) {
-                uint256 inputAmount = pendingOrders[key.toId()][tick][
-                    executeZeroForOne
-                ];
+                uint256 inputAmount = pendingOrders[key.toId()][tick][false];
                 if (inputAmount > 0) {
-                    executeOrder(key, tick, executeZeroForOne, inputAmount);
+                    executeOrder(key, tick, false, inputAmount);
                     return (true, currentTick);
                 }
             }
